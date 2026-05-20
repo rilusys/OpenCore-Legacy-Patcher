@@ -24,8 +24,8 @@ SupportedSMBIOS = [
     "MacBookAir6,2",
     "MacBookAir7,1",
     "MacBookAir7,2",
-    # "MacBookAir8,1",
-    # "MacBookAir8,2",
+    "MacBookAir8,1",
+    "MacBookAir8,2",
     # MacBook Pro
     "MacBookPro4,1",
     "MacBookPro5,1",
@@ -361,4 +361,26 @@ Missing_USB_Map_Ventura = [
     "iMac16,1",
     "iMac16,2",
     "iMac17,1",
+]
+
+# Macs with Apple T2 Security Chip
+T2Macs = [
+    "MacBookAir8,1",
+    "MacBookAir8,2",
+    "MacBookAir9,1",
+    "MacBookPro15,1",
+    "MacBookPro15,2",
+    "MacBookPro15,3",
+    "MacBookPro15,4",
+    "MacBookPro16,1",
+    "MacBookPro16,2",
+    "MacBookPro16,3",
+    "MacBookPro16,4",
+    "Macmini8,1",
+    "MacPro7,1",
+    "iMac19,1",
+    "iMac19,2",
+    "iMac20,1",
+    "iMac20,2",
+    "iMacPro1,1",
 ]

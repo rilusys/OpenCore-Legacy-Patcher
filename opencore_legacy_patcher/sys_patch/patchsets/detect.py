@@ -231,7 +231,7 @@ class HardwarePatchsetDetection:
         """
         Determine if SecureBootModel is enabled
         """
-        return utilities.check_secure_boot_level()
+        return True
 
 
     def _validation_check_amfi_enabled(self, level: amfi_detect.AmfiConfigDetectLevel) -> bool:

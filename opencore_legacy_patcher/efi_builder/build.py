@@ -15,6 +15,7 @@ from datetime import date
 from .. import constants
 
 from ..support import utilities
+from ..datasets import model_array
 
 from .networking import (
     wired,
@@ -28,7 +29,8 @@ from . import (
     storage,
     smbios,
     security,
-    misc
+    misc,
+    t2smbiossecurity,
 )
 
 
@@ -52,6 +54,16 @@ class BuildOpenCore:
         self._build_opencore()
 
 
+    def _remove_conflicting_t2_ssdt(self) -> None:
+        """
+        Removes SSDT-T2-Fake.aml if a T2 Mac is detected, to prevent conflicts
+        with T2-specific kernel patches and boot-args.
+        """
+        ssdt_path = self.constants.acpi_path / "SSDT-T2-Fake.aml"
+        if ssdt_path.exists():
+            logging.warning(f"Removing SSDT-T2-Fake.aml for T2 Mac ({self.model})")
+            ssdt_path.unlink()
+
     def _build_efi(self) -> None:
         """
         Build EFI folder
@@ -67,8 +79,31 @@ class BuildOpenCore:
         support.BuildSupport(self.model, self.constants, self.config).enable_kext("Lilu.kext", self.constants.lilu_version, self.constants.lilu_path)
         self.config["Kernel"]["Quirks"]["DisableLinkeditJettison"] = True
 
-        # macOS Sequoia support for Lilu plugins
-        self.config["NVRAM"]["Add"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"]["boot-args"] += " -lilubetaall"
+        is_t2 = self.model in model_array.T2Macs
+
+        # Intel UHD 630 VMM Stall Fix (2018-2020 T2 Models)
+        _T2_UHD630_MODELS = [
+            "MacBookPro15,1", "MacBookPro15,2", "MacBookPro15,3", "MacBookPro15,4",
+            "MacBookPro16,1", "MacBookPro16,2", "MacBookPro16,3", "MacBookPro16,4",
+            "Macmini8,1", "iMac19,1", "iMac19,2", "iMac20,1", "iMac20,2",
+        ]
+        if self.model in _T2_UHD630_MODELS:
+            logging.info(f"- Disabling VMM CPUID for {self.model} to prevent UHD 630 driver stall")
+            self.constants.set_vmm_cpuid = False
+
+        if is_t2:
+            self._remove_conflicting_t2_ssdt()
+            t2smbiossecurity.finalize_t2_tahoe(self.constants.plist_path)
+            logging.info("- Adding T2-specific boot args")
+            self.config["NVRAM"]["Add"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"]["boot-args"] += " -ibtcompatbeta -amfipassbeta"
+            self.config["Kernel"]["Quirks"]["DisableIoMapper"] = True
+
+        # macOS Sequoia/Tahoe support for Lilu plugins
+        # T2 Macs: use -liluforce to avoid corecrypto FIPS POST panic caused by -lilubetaall
+        if is_t2:
+            self.config["NVRAM"]["Add"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"]["boot-args"] += " -liluforce"
+        else:
+            self.config["NVRAM"]["Add"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"]["boot-args"] += " -lilubetaall"
 
         # Call support functions
         for function in [

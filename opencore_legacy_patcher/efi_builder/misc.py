@@ -55,6 +55,16 @@ xw
         self._cpu_friend_handling()
         self._general_oc_handling()
         self._t1_handling()
+        self._t2_handling()
+
+
+    def _set_nvram_value(self, uuid: str, key: str, value: any, overwrite: bool = False) -> None:
+        if "Add" not in self.config["NVRAM"]:
+            self.config["NVRAM"]["Add"] = {}
+        if uuid not in self.config["NVRAM"]["Add"]:
+            self.config["NVRAM"]["Add"][uuid] = {}
+        if overwrite or key not in self.config["NVRAM"]["Add"][uuid]:
+            self.config["NVRAM"]["Add"][uuid][key] = value
 
 
     def _feature_unlock_handling(self) -> None:
@@ -395,3 +405,71 @@ xw
         support.BuildSupport(self.model, self.constants, self.config).enable_kext("AppleKeyStore.kext", self.constants.t1_key_store_version, self.constants.t1_key_store_path)
         support.BuildSupport(self.model, self.constants, self.config).enable_kext("AppleCredentialManager.kext", self.constants.t1_credential_version, self.constants.t1_credential_path)
         support.BuildSupport(self.model, self.constants, self.config).enable_kext("KernelRelayHost.kext", self.constants.kernel_relay_version, self.constants.kernel_relay_path)
+
+    def _t2_handling(self) -> None:
+        if self.model not in model_array.T2Macs:
+            return
+
+        builder = support.BuildSupport(self.model, self.constants, self.config)
+
+        logging.info("- Enabling T2 Security Chip support")
+
+        if builder.get_kext_by_bundle_path("WhateverGreen.kext").get("Enabled") is not True:
+            logging.info("- Enabling WhateverGreen")
+            builder.enable_kext("WhateverGreen.kext", self.constants.whatevergreen_version, self.constants.whatevergreen_path)
+
+        if builder.get_kext_by_bundle_path("CryptexFixup.kext").get("Enabled") is not True:
+            logging.info("- Enabling CryptexFixup.kext")
+            builder.enable_kext("CryptexFixup.kext", self.constants.cryptexfixup_version, self.constants.cryptexfixup_path)
+
+        _T2_UNSUPPORTED_MANTISSA_MODELS = [
+            "MacBookAir8,1", "MacBookAir8,2", "MacBookAir9,1", "MacBookPro16,3"
+        ]
+        if self.model in _T2_UNSUPPORTED_MANTISSA_MODELS:
+            logging.info(f"- {self.model}: Applying Unsupported Mantissa Speed kernel panic patches")
+            for kext_name in ["USB-Map.kext", "USB-Map-Tahoe.kext"]:
+                kext = builder.get_kext_by_bundle_path(kext_name)
+                if kext.get("Enabled"):
+                    logging.info(f"  - Disabling {kext_name}")
+                    kext["Enabled"] = False
+
+            usb_host_patch = {
+                "Arch": "x86_64",
+                "Comment": "Disable AppleUSBHostPort power state timeout",
+                "Enabled": True,
+                "Identifier": "com.apple.driver.AppleUSBHostPort",
+                "Find": b"\x48\x85\xC0\x74\x08\x48\x8B\x00\x48\x8B\x40\x28\xFF\xE0",
+                "Replace": b"\xEB\x0C\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90",
+                "MinKernel": "24.0.0"
+            }
+            vhci_patch = {
+                "Arch": "x86_64",
+                "Comment": "Patch AppleUSBVHCI to skip transition timeout",
+                "Enabled": True,
+                "Identifier": "com.apple.driver.AppleUSBVHCI",
+                "Find": b"\x48\x8B\x05\x00\x00\x00\x00\x48\x8D\x0D\x00\x00\x00\x00\x41\xBB\x01\x00\x00\x00",
+                "Replace": b"\x48\x8B\x05\x00\x00\x00\x00\x48\x8D\x0D\x00\x00\x00\x00\x41\xBB\x00\x00\x00\x00",
+                "MinKernel": "24.0.0"
+            }
+            self.config["Kernel"]["Patch"].append(usb_host_patch)
+            self.config["Kernel"]["Patch"].append(vhci_patch)
+
+        logging.info("- Skipping Language and Region selection (all T2 models)")
+        self.config["NVRAM"]["Add"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"]["prev-lang:kbd"] = "en-US:0"
+
+        logging.info("- Adding T2-specific boot arguments")
+        self.config["NVRAM"]["Add"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"]["boot-args"] += " rddelay=5 igfxfw=2 igfxonln=1 -disable_ext_panics -no_compat_check"
+
+        if "7C436110-AB2A-4BBB-A880-FE41995C9F82" not in self.config["NVRAM"]["Delete"]:
+            self.config["NVRAM"]["Delete"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"] = []
+        delete_node = self.config["NVRAM"]["Delete"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"]
+        if "boot-args" not in delete_node:
+            delete_node.append("boot-args")
+
+        logging.info("- Disabling Library Validation")
+        builder.get_item_by_kv(
+            self.config["Kernel"]["Patch"], "Comment", "Disable Library Validation Enforcement"
+        )["Enabled"] = True
+
+        logging.info("- Setting SIP to 0x803")
+        self._set_nvram_value("7C436110-AB2A-4BBB-A880-FE41995C9F82", "csr-active-config", binascii.unhexlify("03080000"), overwrite=True)
